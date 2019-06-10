@@ -1,0 +1,473 @@
+<!doctype html>
+<html>
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<title>Procrastinating with DBIx::LazyCache</title>
+
+		<link rel="stylesheet" href="css/reset.css">
+		<link rel="stylesheet" href="css/reveal.css">
+		<link rel="stylesheet" href="css/theme/black.css">
+
+		<!-- Theme used for syntax highlighting of code -->
+		<link rel="stylesheet" href="lib/css/monokai.css">
+
+		<!-- Printing and PDF exports -->
+		<script>
+			var link = document.createElement( 'link' );
+			link.rel = 'stylesheet';
+			link.type = 'text/css';
+			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+			document.getElementsByTagName( 'head' )[0].appendChild( link );
+		</script>
+	</head>
+	<body>
+		<div class="reveal">
+			<div class="slides">
+<section>
+	<h2>Procrastinating with DBIx::LazyCache</h2>
+	<h4>Jeffrey Goff</h4>
+	<h6>Clearbuilt Technologies</h6>
+	<aside class="notes">
+Now, I'm Jeff Goff with Clearbuilt technologies [and we might be hiring].
+
+This module is available on CPAN as I speak, and I think I see a few people getting ahead of me and reading the find manual right now.
+
+It doesn't use special database features, and in fact I made it a point to run the tests in SQLite to make sure we don't use fancy triggers or non-compatible SQL. We tested extensively on Postgres though, so it works well with most database products out there.
+	</aside>
+</section>
+
+<section>
+	<h1>Resources</h1>
+	<ul>
+		<li><a href="https://github.com/drforr/DBIx-LazyCache-Talk">https://github.com/drforr/DBIx-LazyCache-Talk</a></li>
+		<li><a href="https://metacpan.org/pod/DBIx::LazyCache">https://metacpan.org/pod/DBIx::LazyCache</a></li>
+		<li><a href="https://metacpan.org/pod/DBIx::Class">https://metacpan.org/pod/DBIx::Class</a></li>
+		<li><a href="https://perldancer.org">perldancer.org</a></li>
+	</ul>
+	<aside class="notes">
+		Lightning talks are next, so I won't be offended if you leave early to get a seat.
+	</aside>
+</section>
+
+<section>
+	<h2>What's it good for?</h2>
+	<ul>
+		<li class="fragment">Fine-grained control</li>
+		<li class="fragment">Calculated columns</li>
+		<li class="fragment">Cache invalidation</li>
+	</ul>
+	<aside class="notes">
+		So, here's the elevator pitch version of the talk. If you do data warehousing, need to control access to columns or need to simplify your DB logic, sit back and see if this solution is right for you.
+
+		Also, "There are two things... naming, cache invalidat, and off-by-... five! No, three..."
+	</aside>
+</section>
+
+<section>
+	<h2>The Business (logic)</h2>
+	<ul>
+		<ul>
+			<li>Projects are composed of Items</li>
+			<li>Items have IDs, names and parent project IDs</li>
+			<li>Also, they have unit price, number of units and total price</li>
+			<li>Projects also have total prices</li>
+		</ul>
+	</ul>
+	<aside class="notes">
+		<p>Reading down this list, if you've been trained in DB admin,
+		your eyes should get wider and wider, and there are probably
+		a few of you bursting at the seams to tell me what I'm doing
+		wrong.</p>
+		<p>And you're right, but this is a real-world application, and
+		the real world can be messy and even tearful at times.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>UI constraints</h2>
+	<ul>
+		<li>IDs are read-only columns</li>
+		<li>A Project's total price == total of its Items</li>
+		<li>An Item's total price == quantity * unit_price</li>
+		<li>Change any of the columns, the rest update</li>
+	</ul>
+	<aside class="notes">
+		<p>These are pretty normal constraints to live in. You don't
+		want to modify the relationship between parts and their
+		component projects, the only things that should change
+		are the prices as the market fluctuates, and maybe the
+		names.</p>
+		<p>And of course there are a bunch of ways to do this.
+		The proper way is with calculated columns, which are a
+		pretty new feature in SQL, and only a few databases so
+		far support them. Making the columns read-only is easy
+		as well, but interpreting the errors to the user may not
+		be that easy. Triggers will work as well, but you need at
+		least one per column, and they'll change in an interlocking
+		fashion.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Wouldn't it be nice if...</h2>
+	<pre>
+		__PACKAGE__->add_columns(
+		  id => {
+		    data_type => 'integer',
+		    is_nullable => 0,
+		    <font color="green" class="fragment">is_readonly => 1</font>
+		  }
+		);
+	        <font color="green" class="fragment">__PACKAGE__->load_components( 'DBIx::Helper::Row::LazyCache' );</font>
+	</pre>
+	<aside class="notes">
+		<p>First fragment is 'is_readonly =&gt; 1', second '-&gt;load_components'</p>
+		<br/>
+		<br/>
+
+		<p>Stop and take an audience poll - dbix raw vs loader vs Candy</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Front-End Loading</h2>
+	<pre>
+		__PACKAGE__->add_columns(
+		  id => {
+		    data_type => 'integer',
+		    is_nullable => 0
+		  }
+		);
+
+		# ABOVE HERE BE DRAGONS
+	        __PACKAGE__->load_components( 'DBIx::Helper::Row::LazyCache' );
+		__PACKAGE__->make_readonly( 'id' );
+	</pre>
+	<aside class="notes">Schema::Loader creates files with "Do not modify" sections, we've added methods to help work around that.</aside>
+</section>
+
+<section>
+	<h3>Pour some (syntactic) sugar on me</h3>
+	<pre>
+	        use DBIx::Class::Candy;
+	        load_components 'Helper::Row::LazyCache';
+		add_columns id => {
+		  data_type => 'integer',
+		  is_nullable => 0
+		}
+
+                # ...
+		make_readonly 'id';
+	</pre>
+</section>
+
+<section>
+	<h2>Digging ourselves deeper</h2>
+	<pre>
+		$schema->resultset( 'Item' )->
+		         find({ id => 1 })->
+			 id( 42 );
+
+		 <font color="red">Attempt to modify readonly column 'Item'</font>
+	</pre>
+	<aside class="notes">
+		<p>I bet you'd like to see this live...</p>
+		<br/>
+		<p>Error message hidden here</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Forging ahead</h2>
+	<ul>
+		<li>Protect sensitive columns with <i>make_readonly()</i></li>
+		<li>Updating total_price when quantity changes</li>
+		<li>Let's break it down</li>
+	</ul>
+	<aside class="notes">
+		<p>Future versions will support regex matching and possibly
+		Apache-style allow/deny access to columns.</p>
+		<br/>
+		<p>Updating columns based on something else is a little
+		more complex, but it doesn't require any additional code
+		beyond what you're already doing.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Cache invalidation</h2>
+	<pre>
+	__PACKAGE__->add_columns(
+	  quantity => { # ...
+	    invalidates => [ 'total_price', 'project->total_price' ]
+          },
+	  unit_price => { # ...
+	    invalidates => [ 'total_price', 'project->total_price' ]
+	  });
+	</pre>
+	<aside class="notes">
+		<p>Now things get a little more complex. We've got two
+		steps to implement the business logic, so we'll take it
+		a step at a time. First we're going to get rid of the
+		stale data.</p>
+		<br/>
+		<p>Whenever the quantity of an item (yes, I know...)
+		changes, its total price becomes out-of-whack. And as a
+		bonus, so does the total price of the entire *project*.
+		So the first part here simply NULLs out those related
+		columns. It follows the DBIC chain from the project
+		ID out to the project's total price too.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Alternative syntaxes</h2>
+	<pre>
+	__PACKAGE__->invalidates(
+	  quantity => [ 'total_price', 'project->total_price' ]
+          },
+	  unit_price => [ 'total_price', 'project->total_price' ]
+	);
+	</pre>
+	<pre>
+	invalidates
+	  quantity => [ 'total_price', 'project->total_price' ]
+          },
+	  unit_price => [ 'total_price', 'project->total_price' ]
+	;
+	</pre>
+	<aside class="notes">
+		Of course, it's completely compatible with
+		Schema::Loader, and if you use DBIx::Class::Candy as well.
+	</aside>
+</section>
+
+<section>
+	<h2>Action at a Distance</h2>
+	<pre>
+	resultset( 'Items' )->find({ id => 2 })
+	                    ->update({ unit_price => 32,
+			               quantity   => 5 });
+	printf "Total price: %0.2f\n",
+	  resultset( 'Items' )->find({ id => 2 })->total_price;
+        <font color="green" class="fragment">$0.00</font>
+	</pre>
+	<aside class="notes">
+		<P>If it helps, you can think of these columns now as quantum
+		entangled. Affecting one column changes the others.
+		This all happens well below the layer that you'll most
+		commonly use as a DBIx::Class user.</p>
+		<br/>
+		<p>Something very important to keep in mind is that
+		DBIC has its *own* caching layer.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Putting it all together</h2>
+	<pre>
+	__PACKAGE__->add_columns(
+	  total_price => {
+	    invalidates => [ 'unit_price', 'project->total_price' ],
+	    calculation => sub {
+	      my ($self, $schema) = @_;
+	      return $self->quantity * $self->unit_price;
+	    }
+	  });
+	</pre>
+	<aside class="notes">
+		<p>Now that we can clear out invalid data, let's automate
+		the process of how we update columns. It's as simple as
+		adding a calculation to that column, right at the point
+		of creation.</p>
+		<br/>
+		<p>Also point out that it's triggered by NULLing a column.
+		This can also be done in a lazy fashion, so the next time
+		it's read the process triggers, rather than immediately.</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Laziness *and* impatience</h2>
+	<pre>
+	__PACKAGE__->add_columns(
+	  total_price => {
+	    is_lazy     => 1,
+	    invalidates => [ 'unit_price', 'project->total_price' ],
+	    calculation => sub {
+	      my ($self, $schema) = @_;
+	      return $self->quantity * $self->unit_price;
+	    }
+	  });
+	</pre>
+	<aside class="notes">
+		This way the calculation will only run when the column
+		is next viewed, that way you don't waste your time
+		recalculating stuff you don't need to.
+	</aside>
+</section>
+
+<section>
+	<h2>Real-world intrusions</h2>
+	<pre>
+	@item = rset( 'Item' )->find({ project_id => 1 });
+	for my $item (@item) {
+	  $item->update({ unit_price => $item->unit_price + 0.01 });
+	}
+	</pre>
+	<aside class="notes">
+		<p>Sometimes you might want to suspend LazyCache's activity,
+		for instance in tight loops like this. Yes, it can
+		probably be done by fancier DBIx stuff, but this might
+		be a common thing, updating unit prices when a project's
+		spec changes.</p>
+
+		<br/>
+		<p>This will update the poor project column once for
+		every item in the list of items, and we don't want that.
+		So let's find a way to hold off on changes...</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Real-world intrusions</h2>
+	<pre>
+	@item = rset( 'Item' )->find({ project_id => 1 });
+	$item[0]->without_calculation( sub {
+  	  for my $item (@item) {
+	    $item->update({ unit_price => $item->unit_price + 0.01 });
+	  }
+	} );
+	</pre>
+	<aside class="notes">
+		<p>Sometimes you might want to suspend LazyCache's activity,
+		for instance in tight loops like this. Yes, it can
+		probably be done by fancier DBIx stuff, but this might
+		be a common thing, updating unit prices when a project's
+		spec changes.</p>
+
+		<br/>
+		<p>This will update the poor project column once for
+		every item in the list of items, and we don't want that.
+		So let's find a way to hold off on changes...</p>
+	</aside>
+</section>
+
+<section>
+	<h2>Flexibility</h2>
+	<pre>
+	__PACKAGE__->add_calculation(
+	  total_price => sub {
+	      my ($self, $schema) = @_;
+	      return $self->quantity * $self->unit_price;
+	  }
+	);
+	</pre>
+	<pre>
+	add_calculation(
+	  total_price => sub {
+	      my ($self, $schema) = @_;
+	      return $self->quantity * $self->unit_price;
+	  }
+	);
+	</pre>
+</section>
+
+<section>
+	<h2>Putting it all together</h2>
+	<ul>
+		<li>Stop changing IDs: <i>is_readonly =&gt; 1</i></li>
+		<li>Invalidate columns when you want: <i>invalidates =&gt; [...]</i></li>
+		<li>Recalculate afterward: <i>calculation =&gt; sub {...}</i></li>
+	</ul>
+</section>
+
+<section>
+	<h1>The End</h1>
+</section>
+
+<!--
+"After this thrilling description I'm sure you're dying how see it in action.
+
+[Damn, may have to make up a quick DB app...]
+
+Track 1:
+
+(load app, go to edit screen)
+
+"Here we're navigating a typical Dancer2 app, editing a DB record. You can see a generic ID key and a few other columns.
+
+"Let's see the first feature in action. (Change ID, click enter) Here we've declared the ID read-only, this is useful for your new users, and supports some other features of the app.
+
+(Switch to code display) ((Maybe fo it all on Lynx?))
+"Let's see where we threw that exception. You could do that in the edit code... Here we are. No exceptions here. We just take the fields and dump them in, nothing special 
+"Could be over in the schema, because you can override column accessors. Hrm, nope. Those of you with quick eyes may have noticed me quickly jumping to the bottom of the file, like I was hiding something.
+
+"Guess what, you're right. Let's scroll back up and look at where we defined the iD column.
+
+"Nothing unusual... Wait, is_nullable is fine but unusual, what's this is_readonly though?
+
+"That's all that you need to do to add LazyCache to your app. Almost." (Scroll up) It's a DBIx helper, so you have to add our component.
+
+"How many of you out there write DBIx schema's by hand? With Schema:: Loader? With Candy? Okay, how many of you have heard of the DBIx::Class::Candy module?
+
+"I hadn't until I delved into the world of the DBIx helpers. The good work news is that we support all of you. You can add LazyCache attributes directly to your class definition, use __PACKAGE__ methods - in this case the fairly mnemonic 'make_readonly', or finally we've declared Candy synonyms of just that, make_readonly. And what's even better is those mutators let you add columns in masse.
+
+"So, you can stop people from editing random columns. Not really a big deal when you think about it, but it's a start.
+
+"What you need to write gets more complex from here, but not by much. Let's
+
+Database contains this:
+-->
+
+<!--
+
+Just show the Project table first.
+
+"Now, we can move on to something more interesting. This is a warehouse style table containing a record of Projects.
+
+"You can probably guess that the retail price is based on the wholesale price and the profit margin. It could go the other way 'round too, but we'll pretend that case doesn't exist. Not that we can't handle it, but it'd complicate things.
+
+"It's a bit contrived to be sure, but worse things lurk in the dark corners of any legacy DB, I can assure you.
+
+"Now, we could create this rule as a trigger on the database, to be sure, firing on create. That's one case. But already we see a little complication. Look at the profit margin. It's nullable, so it's just possible that someone might create an entry with that empty, to be filled in at a later date.
+
+"So, we'll need a trigger for update as well, and because we don't want to repeat the calculation there's gotta be a stored procedure associated with it as well.
+
+"You've now got two triggers, maybe more, and a stored procedure. So whoever wants to update the code after you needs to know Perl to handle the schema and SQL to update the procedures.
+
+"And you've lost portability because stored procedures aren't portable across platforms, and some databases don't support triggers that'll run like you think they should.
+
+"In Perl the situation's not much better. When you go to create a Project record you've got to try to populate that column.
+
+"And think about this - there are 3 columns that you've got to deal with. As long as any 2 of them you can figure out the 3rd, do there are a bunch of cases to work through.
+
+"Why go to allow this trouble when you can just do this?
+-->
+
+<!--
+"This stops anyone from editing the column in DBI, and defines the business logic at the same point in the code. This code will run if that column is NULL and populate thatqP
+-->
+
+			</div>
+		</div>
+
+		<script src="javascripts/reveal.js"></script>
+
+		<script>
+			// More info about config & dependencies:
+			// - https://github.com/hakimel/reveal.js#configuration
+			// - https://github.com/hakimel/reveal.js#dependencies
+			Reveal.initialize({
+				dependencies: [
+					{ src: 'plugin/markdown/marked.js' },
+					{ src: 'plugin/markdown/markdown.js' },
+					{ src: 'plugin/notes/notes.js', async: true },
+					{ src: 'plugin/highlight/highlight.js', async: true }
+				]
+			});
+		</script>
+	</body>
+</html>

@@ -1,0 +1,21 @@
+Project Display<br />
+
+<a href="/project/create">Create Project</a>
+<a href="/project/edit?id=1">Edit Project 1</a>
+
+<table>
+  <tr>
+    <td>ID</td>
+    <td>wholesale</td>
+    <td>retail</td>
+    <td>profit margin</td>
+  </tr>
+  [% FOR project in projects %]
+    <tr>
+      <td>[% project.id %]</td>
+      <td>[% project.wholesale_price %]</td>
+      <td>[% project.retail_price %]</td>
+      <td>[% project.profit_margin %]</td>
+    </tr>
+  [% END %]
+</table>
